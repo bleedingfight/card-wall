@@ -13,27 +13,64 @@ async function bookmarkExists(id) {
   }
 }
 
+/* 同名根目录去重自愈：多个「📌 卡片墙」/回收站同名文件夹收敛为一个，
+ * meta 记录且仍存在的优先，否则保留书签数量最多的；其余子节点并入后删除空壳。 */
+async function dedupeRootFolders(rootId, title, preferredId) {
+  const tree = await chrome.bookmarks.getTree();
+  const root = tree[0].children.find((r) => r.id === rootId);
+  const candidates = (root?.children || []).filter((n) => !n.url && n.title === title);
+  if (candidates.length <= 1) return candidates[0]?.id || null;
+
+  const countLinks = (nodes) =>
+    nodes.reduce((s, n) => s + (n.url ? 1 : countLinks(n.children || [])), 0);
+  const keep = [...candidates].sort((a, b) => {
+    if (a.id === preferredId) return -1;
+    if (b.id === preferredId) return 1;
+    const ca = countLinks(a.children || []);
+    const cb = countLinks(b.children || []);
+    if (cb !== ca) return cb - ca;
+    return Number(a.id) - Number(b.id);
+  })[0];
+  for (const o of candidates) {
+    if (o.id === keep.id) continue;
+    await mergeInto(o.id, keep.id);
+  }
+  return keep.id;
+}
+
+async function mergeInto(srcId, dstId) {
+  const dstChildren = await chrome.bookmarks.getChildren(dstId);
+  for (const c of await chrome.bookmarks.getChildren(srcId)) {
+    if (!c.url) {
+      const same = dstChildren.find((d) => !d.url && d.title === c.title);
+      if (same) {
+        await mergeInto(c.id, same.id);
+        continue;
+      }
+    }
+    await chrome.bookmarks.move(c.id, { parentId: dstId });
+  }
+  await chrome.bookmarks.removeTree(srcId);
+}
+
 async function ensureFolders() {
   const { meta = {} } = await chrome.storage.local.get('meta');
-  let { wallFolderId, trashFolderId } = meta;
+  const tree = await chrome.bookmarks.getTree();
+  const roots = tree[0].children;
+  const bar = roots[0]; // 书签栏
+  const other = roots[1]; // 其他书签
 
-  if (!(await bookmarkExists(wallFolderId)) || !(await bookmarkExists(trashFolderId))) {
-    const tree = await chrome.bookmarks.getTree();
-    const roots = tree[0].children;
-    const bar = roots[0]; // 书签栏
-    const other = roots[1]; // 其他书签
+  let wallFolderId = await dedupeRootFolders(bar.id, WALL_TITLE, meta.wallFolderId);
+  let trashFolderId = await dedupeRootFolders(other.id, TRASH_TITLE, meta.trashFolderId);
 
-    if (!(await bookmarkExists(wallFolderId))) {
-      const f = await chrome.bookmarks.create({ parentId: bar.id, title: WALL_TITLE });
-      wallFolderId = f.id;
-    }
-    if (!(await bookmarkExists(trashFolderId))) {
-      // 回收站放在"其他书签"下，不占书签栏位置
-      const f = await chrome.bookmarks.create({ parentId: other.id, title: TRASH_TITLE });
-      trashFolderId = f.id;
-    }
-    await chrome.storage.local.set({ meta: { wallFolderId, trashFolderId } });
+  if (!wallFolderId) {
+    wallFolderId = (await chrome.bookmarks.create({ parentId: bar.id, title: WALL_TITLE })).id;
   }
+  if (!trashFolderId) {
+    // 回收站放在"其他书签"下，不占书签栏位置
+    trashFolderId = (await chrome.bookmarks.create({ parentId: other.id, title: TRASH_TITLE })).id;
+  }
+  await chrome.storage.local.set({ meta: { wallFolderId, trashFolderId } });
   return { wallFolderId, trashFolderId };
 }
 

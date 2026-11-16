@@ -42,7 +42,7 @@ let trashCards = []; // 回收站书签
 let view = { mode: 'wall', group: null, tag: null, q: '' }; // mode: 'wall' | 'trash'
 let editingUrl = null;
 let groupPages = {}; // 每个分组的当前页码 { [groupId]: pageIndex }
-let dragState = null; // 拖拽中的卡片 { card, isTrash }
+let dragState = null; // 拖拽中的卡片 { card, isTrash }；拖目录树文件夹时额外带 { isFolder: true, descendantIds: Set }
 let treeExpandTimer = null;  // 拖拽悬停自动展开目录的定时器
 let treeExpandTarget = null; // 待自动展开的文件夹 id
 
@@ -106,11 +106,74 @@ function clearTreeDropHovers() {
     el.classList.remove('drop-hover', 'drop-before', 'drop-after'));
 }
 
+/* ---------- 目录树文件夹拖拽辅助 ---------- */
+
+// 递归收集文件夹节点下所有后代 id（文件夹 + 书签），作为拖动该文件夹时的放置禁区
+function collectDescendants(folderNode) {
+  const out = new Set();
+  const walk = (nodes) => {
+    for (const c of nodes) {
+      out.add(c.id);
+      if (c.children) walk(c.children);
+    }
+  };
+  walk(folderNode.children || []);
+  return out;
+}
+
+// 拖动文件夹时，目标位于其自身或子树内则禁止放置（防止把目录移进自己/后代造成循环）
+function dragCoversTarget(targetId) {
+  return !!dragState.isFolder &&
+    (dragState.card.id === targetId || (dragState.descendantIds || new Set()).has(targetId));
+}
+
+function currentSidebarWidth() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w')) || 240;
+}
+
+function applySidebarWidth() {
+  const w = Math.round(Number(settings.sidebarWidth)) || 240;
+  document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+}
+
+/* 拖拽把手：按住右缘把手拖动实时调整侧栏宽度（200–480px），松手持久化；
+ * 主区 flex 自适应，搜索栏宽度随网格实时重校准；宽度属个人偏好，不参与 WebDAV 同步 */
+function bindSidebarResizer() {
+  const resizer = $('#sidebarResizer');
+  let resizing = null;
+  resizer.addEventListener('pointerdown', (e) => {
+    if (document.body.classList.contains('collapsed')) return; // 折叠状态不可拖
+    e.preventDefault();
+    resizing = { x: e.clientX, w: currentSidebarWidth() };
+    resizer.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+  });
+  resizer.addEventListener('pointermove', (e) => {
+    if (!resizing) return;
+    const w = Math.min(480, Math.max(200, Math.round(resizing.w + e.clientX - resizing.x)));
+    settings.sidebarWidth = w;
+    applySidebarWidth();
+    alignStickyTop();
+  });
+  resizer.addEventListener('pointerup', async (e) => {
+    if (!resizing) return;
+    resizing = null;
+    resizer.releasePointerCapture(e.pointerId);
+    document.body.classList.remove('resizing');
+    await saveSettings();
+  });
+  resizer.addEventListener('pointercancel', () => {
+    resizing = null;
+    document.body.classList.remove('resizing');
+  });
+}
+
 document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
   await ensureFolders();
   await loadAll();
+  applySidebarWidth();
   bindUI();
   renderAll();
   applyGlass();
@@ -174,19 +237,64 @@ async function bookmarkExists(id) {
   }
 }
 
+/* 同名根目录去重自愈：
+ * 历史原因可能在书签栏产生多个「📌 卡片墙」文件夹（首次安装时后台与新标签页并发创建、
+ * 手动复制过、或 meta 里记录的 id 失效后又新建）。启动时统一收敛：
+ * meta 记录且仍存在的优先，否则保留书签数量最多的；其余目录的子节点
+ * （同名子文件夹递归融合，避免合并出重名分组）并入保留目录后删除空壳。
+ * 返回收敛后的唯一目录 id；不存在则返回 null（由调用方创建）。 */
+async function dedupeRootFolders(rootId, title, preferredId) {
+  const tree = await chrome.bookmarks.getTree();
+  const root = tree[0].children.find((r) => r.id === rootId);
+  const candidates = (root?.children || []).filter((n) => !n.url && n.title === title);
+  if (candidates.length <= 1) return candidates[0]?.id || null;
+
+  const countLinks = (nodes) =>
+    nodes.reduce((s, n) => s + (n.url ? 1 : countLinks(n.children || [])), 0);
+  const keep = [...candidates].sort((a, b) => {
+    if (a.id === preferredId) return -1;
+    if (b.id === preferredId) return 1;
+    const ca = countLinks(a.children || []);
+    const cb = countLinks(b.children || []);
+    if (cb !== ca) return cb - ca;
+    return Number(a.id) - Number(b.id);
+  })[0];
+  for (const o of candidates) {
+    if (o.id === keep.id) continue;
+    await mergeInto(o.id, keep.id);
+  }
+  return keep.id;
+}
+
+/* 把 srcId 整棵目录合并进 dstId：同名子文件夹递归融合，其余按原顺序追加到末尾 */
+async function mergeInto(srcId, dstId) {
+  const dstChildren = await chrome.bookmarks.getChildren(dstId);
+  for (const c of await chrome.bookmarks.getChildren(srcId)) {
+    if (!c.url) {
+      const same = dstChildren.find((d) => !d.url && d.title === c.title);
+      if (same) {
+        await mergeInto(c.id, same.id);
+        continue;
+      }
+    }
+    await chrome.bookmarks.move(c.id, { parentId: dstId });
+  }
+  await chrome.bookmarks.removeTree(srcId);
+}
+
 async function ensureFolders() {
   const { meta = {} } = await chrome.storage.local.get('meta');
-  wallFolderId = meta.wallFolderId;
-  trashFolderId = meta.trashFolderId;
-  if ((await bookmarkExists(wallFolderId)) && (await bookmarkExists(trashFolderId))) return;
-
   const tree = await chrome.bookmarks.getTree();
   const bar = tree[0].children[0];   // 书签栏
   const other = tree[0].children[1]; // 其他书签
-  if (!(await bookmarkExists(wallFolderId))) {
+
+  wallFolderId = await dedupeRootFolders(bar.id, '📌 卡片墙', meta.wallFolderId);
+  trashFolderId = await dedupeRootFolders(other.id, '🗑 卡片墙回收站', meta.trashFolderId);
+
+  if (!wallFolderId) {
     wallFolderId = (await chrome.bookmarks.create({ parentId: bar.id, title: '📌 卡片墙' })).id;
   }
-  if (!(await bookmarkExists(trashFolderId))) {
+  if (!trashFolderId) {
     trashFolderId = (await chrome.bookmarks.create({ parentId: other.id, title: '🗑 卡片墙回收站' })).id;
   }
   await chrome.storage.local.set({ meta: { wallFolderId, trashFolderId } });
@@ -204,7 +312,7 @@ async function loadAll() {
   const st = await chrome.storage.local.get({ cardTags: {}, settings: {}, syncConfig: null });
   cardTags = st.cardTags;
   settings = {
-    sidebarCollapsed: false, bg: 'grad:aurora', layoutN: 4,
+    sidebarCollapsed: false, bg: 'grad:aurora', layoutN: 4, sidebarWidth: 240,
     glassOpacity: 0.13, bingCache: null, collapsedGroups: [], treeExpanded: [],
     ...st.settings,
   };
@@ -356,7 +464,8 @@ function layoutN() {
 }
 
 /* 悬浮搜索栏宽度 = 卡片网格实际占用的宽度（列数 × 卡宽 + 间隙），
-   左右边界与卡片严丝合缝；卡片固定尺寸、列数自适应，故需实测 */
+   左右边界与卡片严丝合缝；卡片固定尺寸，列数 = min(设置的 N, 容器可容纳列数)，
+   由这里统一计算并写入 --grid-cols 供 .group-grid 使用（实测后生效） */
 function alignStickyTop() {
   const bar = $('#stickyTop');
   if (!bar) return;
@@ -367,7 +476,9 @@ function alignStickyTop() {
   }
   const cardW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 170;
   const gap = 14;
-  const cols = Math.max(1, Math.floor((probe.clientWidth + gap) / (cardW + gap)));
+  const fitCols = Math.max(1, Math.floor((probe.clientWidth + gap) / (cardW + gap)));
+  const cols = Math.min(layoutN(), fitCols); // 方阵上限 N；容器不够时自动降列
+  document.documentElement.style.setProperty('--grid-cols', cols);
   bar.style.width = cols * cardW + (cols - 1) * gap + 'px';
 }
 
@@ -672,9 +783,10 @@ function renderTreeNodes(nodes, depth, container) {
       // 点击整行 = 切换展开/收起（展开时右侧聚焦该目录，收起时若正聚焦则返回全部）
       row.addEventListener('click', () => toggleTreeFolder(n));
 
-      // 拖放目标：松手把书签移入该目录；悬停折叠目录自动展开，可继续往深层拖
+      // 拖放目标：松手把书签/目录移入该目录；悬停折叠目录自动展开，可继续往深层拖
       row.addEventListener('dragover', (e) => {
         if (!dragState || dragState.isTrash || dragState.card.id === n.id) return;
+        if (dragCoversTarget(n.id)) return; // 拖动目录不可放入自身或其子目录
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         row.classList.add('drop-hover');
@@ -690,8 +802,29 @@ function renderTreeNodes(nodes, depth, container) {
         e.stopPropagation();
         row.classList.remove('drop-hover');
         cancelTreeExpand();
-        if (!dragState || dragState.isTrash) return;
+        if (!dragState || dragState.isTrash || dragCoversTarget(n.id)) return;
         await moveToFolder(dragState.card, n.id);
+      });
+
+      // 目录本身可拖动：拖到其他目录上 = 整体移入（含全部内容），拖到回收站 = 目录内收藏全部移入回收站
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        dragState = {
+          card: { id: n.id, title: n.title, url: null },
+          isTrash: false,
+          isFolder: true,
+          descendantIds: collectDescendants(n), // 子树内所有节点 id（放置禁区）
+        };
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', n.id);
+      });
+      row.addEventListener('dragend', () => {
+        dragState = null;
+        row.classList.remove('dragging');
+        clearTreeDropHovers();
+        cancelTreeExpand();
+        afterDragFlush();
       });
 
       container.appendChild(row);
@@ -728,6 +861,7 @@ function renderTreeNodes(nodes, depth, container) {
       // 树是纵向列表：光标在上半 = 插到它前面，下半 = 插到它后面
       row.addEventListener('dragover', (e) => {
         if (!dragState || dragState.isTrash || dragState.card.id === n.id) return;
+        if (dragCoversTarget(n.id)) return; // 拖动目录不可放到其子树内的链接旁
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         const rect = row.getBoundingClientRect();
@@ -745,6 +879,7 @@ function renderTreeNodes(nodes, depth, container) {
         const before = row.classList.contains('drop-before');
         row.classList.remove('drop-before', 'drop-after');
         if (!dragState || dragState.isTrash || dragState.card.id === n.id) return;
+        if (dragCoversTarget(n.id)) return;
         await moveBookmark(dragState.card, n, before ? 'before' : 'after');
       });
     }
@@ -926,6 +1061,7 @@ function makeCardEl(c, { groupTitle = '', isTrash = false, size = 'card' } = {})
     });
     el.addEventListener('dragover', (e) => {
       if (!dragState || dragState.isTrash || dragState.card.id === c.id) return;
+      if (dragCoversTarget(c.id)) return; // 拖动目录不可放到其子树内的卡片上
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       const rect = el.getBoundingClientRect();
@@ -939,6 +1075,7 @@ function makeCardEl(c, { groupTitle = '', isTrash = false, size = 'card' } = {})
       const before = el.classList.contains('drop-before');
       el.classList.remove('drop-before', 'drop-after');
       if (!dragState || dragState.isTrash || dragState.card.id === c.id) return;
+      if (dragCoversTarget(c.id)) return;
       await moveBookmark(dragState.card, c, before ? 'before' : 'after');
     });
   }
@@ -969,7 +1106,11 @@ async function moveBookmark(dragCard, targetCard, position) {
   } else {
     index = position === 'before' ? tIdx : tIdx + 1;
   }
-  await chrome.bookmarks.move(dragCard.id, { parentId, index });
+  try {
+    await chrome.bookmarks.move(dragCard.id, { parentId, index });
+  } catch {
+    return; // Chrome 拒绝移动（如把文件夹移入其后代），保持原状
+  }
   await loadAll();
   renderAll();
 }
@@ -992,6 +1133,41 @@ async function trashCard(c) {
   cardTags[c.url] = { ...(cardTags[c.url] || { tags: [] }), deletedAt: Date.now() };
   await saveTags();
   await chrome.bookmarks.move(c.id, { parentId: trashFolderId });
+  await loadAll();
+  renderAll();
+}
+
+/* 目录整体移入回收站：目录下全部收藏（含嵌套子目录）逐个移入回收站文件夹，
+ * 每个链接标记 deletedAt 以便回收站显示删除日期；最后删除空目录结构。
+ * 拖目录到「回收站」按钮即调用本函数（目录本身消失，收藏可在回收站逐张恢复） */
+async function trashFolder(st) {
+  const folderId = st.card.id;
+  const gone = new Set([folderId, ...st.descendantIds]); // 目录本身 + 子树全部节点
+  try {
+    const [sub] = await chrome.bookmarks.getSubTree(folderId);
+    const links = flatten(sub.children); // 递归收集目录内全部书签（含嵌套）
+    const now = Date.now();
+    for (const c of links) {
+      cardTags[c.url] = { ...(cardTags[c.url] || { tags: [] }), deletedAt: now };
+    }
+    await saveTags();
+    for (const c of links) {
+      try { await chrome.bookmarks.move(c.id, { parentId: trashFolderId }); }
+      catch (err) { console.warn('[card-wall] 移入回收站失败：', c.url, err); }
+    }
+    try { await chrome.bookmarks.removeTree(folderId); } catch (err) { console.warn('[card-wall] 删除目录结构失败：', err); }
+  } catch (err) {
+    console.warn('[card-wall] trashFolder 失败：', err);
+    return;
+  }
+  // 正聚焦被删目录（或其子目录）时回到「全部」视图；清理持久化状态里的残留 id
+  if (view.group && gone.has(view.group)) {
+    view.group = null;
+    focusGroup = null;
+  }
+  settings.treeExpanded = (settings.treeExpanded || []).filter((id) => !gone.has(id));
+  settings.collapsedGroups = (settings.collapsedGroups || []).filter((id) => !gone.has(id));
+  await saveSettings();
   await loadAll();
   renderAll();
 }
@@ -1429,6 +1605,7 @@ async function saveSyncConfig() {
 
 function bindUI() {
   document.body.classList.toggle('collapsed', !!settings.sidebarCollapsed);
+  bindSidebarResizer();
 
   // 侧边栏折叠（把手吸附在侧边栏右缘，随面板一起移动）
   const st = $('#sideToggle');
@@ -1486,7 +1663,9 @@ function bindUI() {
   // 拖卡片到「回收站」按钮 = 移入回收站
   const trashBtn = $('#trashBtn');
   trashBtn.addEventListener('dragover', (e) => {
-    if (!dragState || dragState.isTrash || view.mode !== 'wall') return;
+    if (!dragState || dragState.isTrash) return;
+    // 目录树常驻侧边栏：任何视图下拖目录到回收站都应可用；卡片拖动仅在卡片墙视图
+    if (!dragState.isFolder && view.mode !== 'wall') return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     trashBtn.classList.add('drop-hover');
@@ -1496,7 +1675,8 @@ function bindUI() {
     e.preventDefault();
     trashBtn.classList.remove('drop-hover');
     if (!dragState || dragState.isTrash) return;
-    await trashCard(dragState.card);
+    if (dragState.isFolder) await trashFolder(dragState); // 拖目录 = 目录内全部收藏移入回收站
+    else await trashCard(dragState.card);
   });
 
   // 一键导入书签

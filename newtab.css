@@ -12,6 +12,7 @@
   --radius: 18px;
   --card-w: 170px;  /* 卡片固定宽度：不随侧边栏开合变化 */
   --card-h: 150px;  /* 卡片固定高度 */
+  --sidebar-w: 240px; /* 侧边栏宽度：可由右缘把手拖拽调整 */
 }
 
 /* 双栏独立滚动：body 不滚动，左栏（侧边栏内部）与右栏（#main）各自滚动 */
@@ -35,7 +36,7 @@ body {
 
 /* ---------- 侧边栏 ---------- */
 #sidebar {
-  width: 240px;
+  width: var(--sidebar-w);
   flex-shrink: 0;
   padding: 24px 16px;
   display: flex;
@@ -52,7 +53,24 @@ body {
   transition: margin-left 0.28s ease;
 }
 
-body.collapsed #sidebar { margin-left: -240px; }
+body.collapsed #sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
+
+/* 宽度拖拽把手：吸附在侧边栏右缘，悬停/拖拽时高亮；顶部让位给折叠圆钮 */
+.sidebar-resizer {
+  position: absolute;
+  right: -3px;
+  top: 56px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 19;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover, .sidebar-resizer:active { background: rgba(124, 158, 255, 0.45); }
+
+/* 拖拽中：全局锁定光标与文本选择，避免把手外误选内容 */
+body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 
 /* 折叠把手：吸附在侧边栏右缘外侧，随侧边栏一起收起，始终露出可点击 */
 .side-toggle {
@@ -332,7 +350,9 @@ button.danger:hover { background: rgba(255, 123, 123, 0.3); }
 
 .group-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, var(--card-w)); /* 固定列宽，宽度变化时自动增减列数 */
+  /* 列数 = min(设置的 N, 容器可容纳列数)，由 alignStickyTop 计算后写入 --grid-cols：
+     容器够宽时严格 N 列 × N 行方阵；容器不够时自动降列，卡片不溢出 */
+  grid-template-columns: repeat(var(--grid-cols, 4), var(--card-w));
   justify-content: start;
   gap: 14px;
   margin: 8px 2px 2px;
