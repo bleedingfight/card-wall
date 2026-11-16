@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "卡片墙 Card Wall",
+  "version": "1.0.0",
+  "description": "卡片化书签收藏墙：磨砂玻璃卡片、tag 分类聚合、回收站与浏览器书签联动",
+  "permissions": ["bookmarks", "storage", "contextMenus", "favicon"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": { "service_worker": "background.js" },
+  "chrome_url_overrides": { "newtab": "newtab.html" }
+}

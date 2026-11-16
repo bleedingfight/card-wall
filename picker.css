@@ -1,0 +1,80 @@
+/* ===== 收藏位置选择器 ===== */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+  color: #f5f7fa;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+h3 { font-size: 16px; margin-bottom: 12px; }
+
+input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f7fa;
+  font-size: 14px;
+  outline: none;
+}
+input:focus { background: rgba(255, 255, 255, 0.18); }
+
+.muted { color: rgba(245, 247, 250, 0.6); }
+
+#pUrl {
+  font-size: 12px;
+  margin: 8px 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lbl { font-size: 12px; color: rgba(245, 247, 250, 0.6); margin: 14px 2px 6px; }
+
+#pFolders {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 6px;
+}
+#pFolders::-webkit-scrollbar { width: 5px; }
+#pFolders::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
+
+.prow {
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s;
+}
+.prow:hover { background: rgba(255, 255, 255, 0.1); }
+.prow.sel { background: rgba(124, 158, 255, 0.45); font-weight: 600; }
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.actions button {
+  padding: 9px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f7fa;
+  cursor: pointer;
+  font-size: 14px;
+}
+.actions button.primary { background: #7c9eff; border: none; }
+.actions button.primary:hover { filter: brightness(1.12); }

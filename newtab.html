@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>卡片墙</title>
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+  <!-- 背景层（磨砂玻璃卡片的就是它的模糊） -->
+  <div id="bg"></div>
+  <aside id="sidebar">
+    <button id="sideToggle" class="side-toggle" title="收起侧边栏">‹</button>
+    <div class="brand">📌 卡片墙</div>
+    <div id="viewBadge" class="view-badge hidden" title="点击返回全部收藏"></div>
+    <nav id="groupList" class="side-nav"></nav>
+    <div class="tag-bar" id="tagBarWrap">
+      <div id="tagBar" class="tag-chips"></div>
+      <button id="tagToggle" class="tag-toggle hidden" title="展开全部标签">▾</button>
+    </div>
+    <div class="side-footer">
+      <button id="importBtn" class="side-btn">⇓ 导入书签</button>
+      <button id="trashBtn" class="side-btn">♻ 回收站 <span id="trashCount"></span></button>
+      <div class="footer-row">
+        <button id="settingsBtn" class="gear-btn" title="设置（背景 / 布局 / WebDAV 同步）">⚙</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 主区域 -->
+  <main id="main">
+    <!-- 悬浮顶栏：搜索条 + 视图标题，滚动时始终钉在最上方 -->
+    <div id="stickyTop">
+      <input id="search" type="search" placeholder="搜索标题、链接、标签…" autocomplete="off">
+      <header id="header">
+        <div class="header-actions">
+          <button id="emptyTrashBtn" class="danger hidden">清空回收站</button>
+        </div>
+      </header>
+    </div>
+    <div id="grid"></div>
+    <div id="emptyHint" class="hidden">
+      <p id="emptyText"></p>
+      <p class="muted">在任意网页右键选择「收藏到卡片墙」，或点击右上角「＋ 添加收藏」</p>
+    </div>
+  </main>
+
+  <!-- 编辑标签弹窗 -->
+  <dialog id="editDlg">
+    <h3>编辑标签</h3>
+    <p id="editCardTitle" class="dlg-sub"></p>
+    <div id="editChips" class="chips"></div>
+    <div class="dlg-row">
+      <input id="tagInput" list="tagSuggestions" placeholder="输入标签，回车添加" autocomplete="off">
+      <button id="tagAddBtn" class="primary">添加</button>
+    </div>
+    <datalist id="tagSuggestions"></datalist>
+    <div class="dlg-actions">
+      <button id="editDoneBtn" class="primary">完成</button>
+    </div>
+  </dialog>
+
+  <!-- 设置面板：背景 / 布局 / WebDAV 同步 -->
+  <dialog id="settingsDlg">
+    <h3>设置</h3>
+
+    <div class="set-sec">背景与布局</div>
+    <div id="bgSwatches"></div>
+    <div class="dlg-col">
+      <label class="muted">壁纸方式（订阅源每天自动换一张）</label>
+      <div class="sub-row">
+        <button id="bgDailyBtn" class="sub-btn" title="按日期做种子的随机图，同一天固定">🎲 每日随机图</button>
+        <button id="bgBingBtn" class="sub-btn" title="必应每日一图，需允许访问 cn.bing.com">🌅 必应每日壁纸</button>
+      </div>
+      <label class="muted" for="bgUrl">固定壁纸 URL（含 {date} 占位符则按天更新）</label>
+      <input id="bgUrl" placeholder="https://…/*.jpg" autocomplete="off">
+      <label class="muted" for="glassOpacity">卡片磨砂不透明度 <span id="glassVal"></span>%</label>
+      <input id="glassOpacity" type="range" min="5" max="60" step="1">
+      <label class="muted" for="layoutN">每页容量 N×N（张/页，2–8）</label>
+      <input id="layoutN" type="number" min="2" max="8" step="1">
+    </div>
+
+    <div class="dlg-divider"></div>
+
+    <div class="set-sec">WebDAV 同步</div>
+    <p class="dlg-sub">同步 tag 配置与外观设置；账号密码 AES-256-GCM 加密保存，口令不落盘</p>
+    <div class="dlg-col">
+      <input id="syncUrl" placeholder="https://dav.example.com/dav/card-wall/" autocomplete="off">
+      <input id="syncUser" placeholder="WebDAV 用户名" autocomplete="off">
+      <input id="syncPass" type="password" placeholder="WebDAV 密码" autocomplete="off">
+      <input id="syncMaster" type="password" placeholder="加密口令（浏览器重启后输入它解锁）" autocomplete="off">
+    </div>
+    <p id="syncStatus" class="muted"></p>
+    <div class="dlg-actions">
+      <button id="syncUnlockBtn">解锁</button>
+      <button id="syncUpBtn" title="上传到云端">↑ 上传</button>
+      <button id="syncDownBtn" title="从云端拉取">↓ 拉取</button>
+      <button id="syncSaveBtn" class="primary">加密保存</button>
+    </div>
+
+    <div class="dlg-actions" style="margin-top: 16px">
+      <button id="bgDoneBtn" class="primary">完成</button>
+    </div>
+  </dialog>
+
+  <!-- 设置面板结束（原背景设置弹窗已并入 settingsDlg） -->
+
+  <script src="newtab.js"></script>
+</body>
+</html>
