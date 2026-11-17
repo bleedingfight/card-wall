@@ -476,7 +476,9 @@ function alignStickyTop() {
   }
   const cardW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 170;
   const gap = 14;
-  const fitCols = Math.max(1, Math.floor((probe.clientWidth + gap) / (cardW + gap)));
+  // 可用宽度从 #grid 容器取（pager 自身宽度依赖 --grid-cols，会形成循环依赖）
+  const available = $('#grid').clientWidth;
+  const fitCols = Math.max(1, Math.floor((available + gap) / (cardW + gap)));
   const cols = Math.min(layoutN(), fitCols); // 方阵上限 N；容器不够时自动降列
   document.documentElement.style.setProperty('--grid-cols', cols);
   bar.style.width = cols * cardW + (cols - 1) * gap + 'px';

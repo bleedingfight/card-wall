@@ -116,7 +116,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   position: sticky;
   top: 0;
   z-index: 6;
-  margin: 0 0 16px;
+  margin: 0 auto 16px; /* 宽度=卡片网格实际占用宽度（alignStickyTop），水平居中 */
   padding: 12px 14px;
   border-radius: 16px;
   background: rgba(12, 14, 26, 0.5);
@@ -327,10 +327,10 @@ button.danger:hover { background: rgba(255, 123, 123, 0.3); }
 
 /* ---------- 主区布局：分组区块纵向排列 ---------- */
 #grid { display: flex; flex-direction: column; }
-#grid.flat { display: grid; grid-template-columns: repeat(auto-fill, var(--card-w)); justify-content: start; gap: 14px; }
+#grid.flat { display: grid; grid-template-columns: repeat(auto-fill, var(--card-w)); justify-content: center; gap: 14px; }
 
-/* 分组区块 */
-.group-sec { margin-bottom: 10px; }
+/* 分组区块：随卡片网格一起水平居中 */
+.group-sec { width: fit-content; margin: 0 auto 10px; }
 
 .group-head {
   display: flex;
@@ -353,13 +353,19 @@ button.danger:hover { background: rgba(255, 123, 123, 0.3); }
   /* 列数 = min(设置的 N, 容器可容纳列数)，由 alignStickyTop 计算后写入 --grid-cols：
      容器够宽时严格 N 列 × N 行方阵；容器不够时自动降列，卡片不溢出 */
   grid-template-columns: repeat(var(--grid-cols, 4), var(--card-w));
-  justify-content: start;
+  justify-content: center;
   gap: 14px;
   margin: 8px 2px 2px;
 }
 
 /* ---------- 分页滑动轨道：三槽（上一页|当前页|下一页），跟手平移 ---------- */
-.pager { overflow: hidden; touch-action: pan-y; /* 纵向滚动手势交给页面，横向归我们 */ }
+/* 宽度必须显式锁定为 N 列网格实际宽度：fit-content 区块内的百分比轨道
+   （track 300% / page 33.33%）会让固有宽度计算爆炸，卡片被顶出可视区 */
+.pager {
+  overflow: hidden;
+  touch-action: pan-y; /* 纵向滚动手势交给页面，横向归我们 */
+  width: calc(var(--grid-cols, 4) * var(--card-w) + (var(--grid-cols, 4) - 1) * 14px + 4px);
+}
 .track {
   display: flex;
   width: 300%;
